@@ -24,6 +24,21 @@ class Data_Analysis:
     def reload_config(self, config_path):
         self.config = Config(config_path)
 
+    def _empty_option(self, title, series_name, chart_type="pie"):
+        if chart_type == "bar":
+            return {
+                "title": {"text": title, "left": "center"},
+                "tooltip": {"trigger": "axis"},
+                "xAxis": {"type": "category", "data": []},
+                "yAxis": {"type": "value"},
+                "series": [{"name": series_name, "type": "bar", "data": []}],
+            }
+        return {
+            "title": {"text": title, "left": "center"},
+            "tooltip": {"trigger": "item"},
+            "series": [{"name": series_name, "type": "pie", "data": []}],
+        }
+
     # 获取重复数最高的关键词数据
     def get_most_common_words(self, text_list, top_num=10):
         """获取重复数最高的关键词数据
@@ -79,7 +94,7 @@ class Data_Analysis:
         try:
             if not os.path.exists(self.config.get('database', 'path')):
                 logger.warning(f"数据库：{self.config.get('database', 'path')} 不存在，如果您是第一次启动项目，且没有 运行的情况下，那么请忽略此报错信息，正常运行后，会自动创建数据库，无须担心")
-                return None
+                return self._empty_option("Comment Statistics", "Comments", "pie")
 
             db = SQLiteDB(self.config.get('database', 'path'))
 
@@ -147,7 +162,7 @@ class Data_Analysis:
         try:
             if not os.path.exists(self.config.get('database', 'path')):
                 logger.warning(f"数据库：{self.config.get('database', 'path')} 不存在，如果您是第一次启动项目，且没有 运行的情况下，那么请忽略此报错信息，正常运行后，会自动创建数据库，无须担心")
-                return None
+                return self._empty_option("Integral Statistics", "Integral", "bar")
             
             db = SQLiteDB(self.config.get('database', 'path'))
 
@@ -311,7 +326,7 @@ class Data_Analysis:
         try:
             if not os.path.exists(self.config.get('database', 'path')):
                 logger.warning(f"数据库：{self.config.get('database', 'path')} 不存在，如果您是第一次启动项目，且没有 运行的情况下，那么请忽略此报错信息，正常运行后，会自动创建数据库，无须担心")
-                return None
+                return self._empty_option("Gift Ranking", "Gifts", "bar")
             
             db = SQLiteDB(self.config.get('database', 'path'))
 

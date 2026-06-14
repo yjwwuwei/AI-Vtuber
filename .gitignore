@@ -162,6 +162,7 @@ output.txt
 db.sqlite3
 config2.json
 config3.json
+config.local.json
 
 bilibili/out/*.mp3
 bilibili/log/*.txt
