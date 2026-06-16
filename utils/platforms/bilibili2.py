@@ -53,8 +53,6 @@ def start_listen(config, common, my_handle, platform: str):
         else:
             try:
                 init_session()
-
-                await run_single_client()
                 await run_multi_clients()
             finally:
                 await session.close()
@@ -162,6 +160,10 @@ def start_listen(config, common, my_handle, platform: str):
             data = {
                 "platform": platform,
                 "username": username,
+                "uid": command["data"].get("uid"),
+                "medal_level": command["data"].get("fans_medal", {}).get("medal_level", 0),
+                "medal_name": command["data"].get("fans_medal", {}).get("medal_name", ""),
+                "guard_level": command["data"].get("uinfo", {}).get("guard", {}).get("level", 0),
                 "content": "进入直播间",
             }
 
@@ -191,6 +193,7 @@ def start_listen(config, common, my_handle, platform: str):
             data = {
                 "platform": platform,
                 "username": username,
+                "uid": message.uid,
                 "user_face": user_face,
                 "content": content,
             }

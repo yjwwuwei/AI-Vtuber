@@ -43,24 +43,26 @@
 # __all__ = ["logger"]
 
 
-import sys
+import json
 import logging
+import sys
+from datetime import datetime
+from pathlib import Path
+
 from loguru import logger
 
-from utils.common import Common
-from utils.config import Config
 
-# 配置文件路径
-config_path = 'config.json'
-common = Common()
+BASE_DIR = Path(__file__).resolve().parent.parent
+CONFIG_PATH = BASE_DIR / "config.json"
+LOG_DIR = BASE_DIR / "log"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-logger.debug("配置文件路径=" + str(config_path))
+try:
+    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+except Exception:
+    config = {"webui": {"log": {"log_level": "INFO", "max_file_size": "1024 MB"}}}
 
-# 实例化配置类
-config = Config(config_path)
-
-# 获取当前时间并生成日志文件路径
-file_path = "./log/log-" + common.get_bj_time(1) + ".txt"
+file_path = str(LOG_DIR / f"log-{datetime.now().strftime('%Y-%m-%d')}.txt")
 
 # 配置 logger
 def configure_logger(file_path, log_level, max_file_size):
@@ -79,8 +81,8 @@ def configure_logger(file_path, log_level, max_file_size):
     logger.add(file_path, level=level, rotation=max_size)
 
 # 获取日志配置
-log_level = config["webui"]["log"].get("log_level", "INFO")
-max_file_size = config["webui"]["log"].get("max_file_size", "1024 MB")
+log_level = config.get("webui", {}).get("log", {}).get("log_level", "INFO")
+max_file_size = config.get("webui", {}).get("log", {}).get("max_file_size", "1024 MB")
 
 # 配置 logger
 configure_logger(file_path, log_level, max_file_size)

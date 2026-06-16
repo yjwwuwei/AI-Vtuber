@@ -254,3 +254,10 @@ static/
 
 add_dependencies.py
 
+# local runtime artifacts
+.runtime/
+cache/
+webui.stdout.log
+webui.stderr.log
+data/lingya_memory.json
+

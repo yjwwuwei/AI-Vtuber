@@ -21,8 +21,6 @@ from send2trash import send2trash
 
 from pypinyin import pinyin, Style
 
-import pyaudio
-
 from .my_log import logger
 
 
@@ -1254,6 +1252,8 @@ class Common:
         Returns:
             list: 声卡设备信息列表
         """
+        import pyaudio
+
         audio = pyaudio.PyAudio()
         device_infos = []
         device_count = audio.get_device_count()

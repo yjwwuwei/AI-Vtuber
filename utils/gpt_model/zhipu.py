@@ -78,6 +78,24 @@ class Zhipu:
                 logger.info("智谱AI 智能体 API Token获取成功")
 
         self.history = []
+        self._last_system_prompt = None
+
+    def split_system_and_user_prompt(self, prompt):
+        marker = "当前要回复的内容："
+        if not isinstance(prompt, str) or marker not in prompt:
+            return None, prompt
+
+        system_prompt, user_prompt = prompt.rsplit(marker, 1)
+        system_prompt = system_prompt.strip()
+        user_prompt = user_prompt.strip()
+
+        if not system_prompt:
+            system_prompt = None
+
+        if system_prompt:
+            system_prompt += "\n只按规则回复最后这条直播间消息，不要复述规则，不要逐条解释规则。"
+
+        return system_prompt, user_prompt
 
     # 智能体 获取token
     def get_assistant_api_token(self, api_key, api_secret):
@@ -454,10 +472,19 @@ class Zhipu:
                             logger.error(f"请求智谱AI 智能体 失败, status_code={status_code}")
                             return None
                 else:
+                    system_prompt, user_prompt = self.split_system_and_user_prompt(prompt)
+                    current_user_prompt = user_prompt if user_prompt else prompt
+
                     if self.config_data["history_enable"]:
+                        if self.model != "charglm-3":
+                            if system_prompt != getattr(self, "_last_system_prompt", None):
+                                self.history = []
+                                self._last_system_prompt = system_prompt
                         import copy 
                         tmp_msg = copy.copy(self.history)
-                        tmp_msg.append({"role": "user", "content": prompt})
+                        tmp_msg.append({"role": "user", "content": current_user_prompt})
+                        if system_prompt and self.model != "charglm-3":
+                            tmp_msg = [{"role": "system", "content": system_prompt}] + tmp_msg
                         logger.debug(f"tmp_msg={tmp_msg}")
 
                         if self.model == "charglm-3":
@@ -490,7 +517,7 @@ class Zhipu:
                                     "messages": [
                                         {
                                             "role": "user",
-                                            "content": prompt
+                                            "content": current_user_prompt
                                         }
                                     ],
                                     "meta": {
@@ -503,15 +530,18 @@ class Zhipu:
                                 }
                             )
                         else:
+                            messages = [
+                                {
+                                    "role": "user",
+                                    "content": current_user_prompt
+                                }
+                            ]
+                            if system_prompt:
+                                messages = [{"role": "system", "content": system_prompt}] + messages
                             response = self.get_zhipu_resp(
                                 { 
                                     "model": self.model,  # 填写需要调用的模型名称
-                                    "messages": [
-                                        {
-                                            "role": "user",
-                                            "content": prompt
-                                        }
-                                    ],
+                                    "messages": messages,
                                     "stream": stream
                                 }
                             )
@@ -535,7 +565,7 @@ class Zhipu:
                                 self.history.pop(0)
                                 self.history.pop(0)
                             else:
-                                self.history.append({"role": "user", "content": prompt})
+                                self.history.append({"role": "user", "content": current_user_prompt})
                                 self.history.append({"role": "assistant", "content": resp_content})
                                 break
                     
@@ -632,10 +662,10 @@ if __name__ == '__main__':
         "temperature": 0.9,
         "history_enable": True,
         "history_max_len": 300,
-        "user_info": "我是陆星辰，是一个男性，是一位知名导演，也是苏梦远的合作导演。我擅长拍摄音乐题材的电影。苏梦远对我的态度是尊敬的，并视我为良师益友。",
-        "bot_info": "苏梦远，本名苏远心，是一位当红的国内女歌手及演员。在参加选秀节目后，凭借独特的嗓音及出众的舞台魅力迅速成名，进入娱乐圈。她外表美丽动人，但真正的魅力在于她的才华和勤奋。苏梦远是音乐学院毕业的优秀生，善于创作，拥有多首热门原创歌曲。除了音乐方面的成就，她还热衷于慈善事业，积极参加公益活动，用实际行动传递正能量。在工作中，她对待工作非常敬业，拍戏时总是全身心投入角色，赢得了业内人士的赞誉和粉丝的喜爱。虽然在娱乐圈，但她始终保持低调、谦逊的态度，深得同行尊重。在表达时，苏梦远喜欢使用“我们”和“一起”，强调团队精神。",
-        "bot_name": "苏梦远",
-        "username": "陆星辰",
+        "user_info": "用户来自直播间，会以弹幕方式和铃芽聊天，话题通常是闲聊、玩梗、提问和即时互动。",
+        "bot_info": "铃芽是直播间里的猫系小助手。她平时会故意装得可爱、黏人、俏皮，偶尔会因为装累了而短暂露出原本偏冷淡、直接的声线，但本质上仍然友好、会接梗、会看上下文。铃芽说话简短自然，适合直播间即时互动。铃芽只会自称“铃芽”或“我”，不会自称女仆、姐姐或AI。",
+        "bot_name": "铃芽",
+        "username": "直播间用户",
         "remove_useless": True
     }
 
