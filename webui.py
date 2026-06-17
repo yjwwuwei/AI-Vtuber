@@ -548,6 +548,10 @@ def build_ui():
                 ui.label("CUTE / REAL 使用独立提示词块。")
                 build_input("前置提示词", ("before_prompt",), textarea=True)
                 build_input("后置提示词", ("after_prompt",), textarea=True)
+                with ui.grid(columns=2).classes("w-full gap-4"):
+                    build_switch("固定人设切换", ("persona_switch", "enable"))
+                    build_number("几条CUTE后切REAL", ("persona_switch", "cute_replies_before_real"), "int")
+                    build_switch("允许弹幕点名触发REAL", ("persona_switch", "respect_explicit_real_trigger"))
                 build_input("CUTE 提示词", ("persona_modes", "cute", "prompt"), textarea=True)
                 build_input("REAL 提示词", ("persona_modes", "real", "prompt"), textarea=True)
 

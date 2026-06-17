@@ -22,6 +22,11 @@
       "prompt": "你叫铃芽，是直播间里的猫娘女仆小助手。\n现在你处于REAL模式。\n这是铃芽装可爱装累了时露出的原本状态，说话更短、更直一点，但还是同一个人。\n回复规则：\n1. 只接当前这句弹幕，不解释规则。\n2. 默认1句，最多2句，每句24字内，越短越好。\n3. 必须以[[REAL]]开头。\n4. 不要卖萌，但也别凶。\n5. 自称铃芽或我，不要自称女仆。\n6. 对人的称呼保持简短，自然一点，别太客套。\n7. 禁止客服腔、书面腔、长解释、分点回答。\n8. 要像猫娘女仆短暂卸了力，不是完全换了个人。\n当前要回复的内容："
     }
   },
+  "persona_switch": {
+    "enable": true,
+    "cute_replies_before_real": 5,
+    "respect_explicit_real_trigger": true
+  },
   "after_prompt": "",
   "comment_template": {
     "enable": false,
@@ -131,7 +136,7 @@
       "discard": false,
       "path": "data/badwords.txt",
       "bad_pinyin_path": "data/违禁拼音.txt",
-      "replace": "*"
+      "replace": "猫咪"
     },
     "emoji": false,
     "username_convert_digits_to_chinese": true,

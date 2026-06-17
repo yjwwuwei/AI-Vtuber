@@ -71,6 +71,8 @@ class My_handle(metaclass=SingletonMeta):
         self.config_path = config_path
         self.config = My_handle.config
         self.last_voice_mode = None
+        self.persona_switch_lock = threading.Lock()
+        self.cute_reply_streak = 0
         self.data_lock = threading.Lock()
         self.timers = {}
         self.zhipu = None
@@ -617,16 +619,37 @@ class My_handle(metaclass=SingletonMeta):
             for phrase in ["如果您有任何问题", "很高兴", "我会尽力", "为您提供", "您好", "请问", "这位观众", "感谢您的"]
         )
 
-    def _pick_live_voice_mode(self, source_content: str, resp_content: str):
+    def _persona_switch_config(self):
+        config = My_handle.config.get("persona_switch") or {}
+        return {
+            "enable": bool(config.get("enable", True)),
+            "cute_replies_before_real": max(1, int(config.get("cute_replies_before_real", 5) or 5)),
+            "respect_explicit_real_trigger": bool(config.get("respect_explicit_real_trigger", True)),
+        }
+
+    def _is_explicit_real_request(self, content: str):
+        return bool(re.search(r"(装累了|别装了|恢复原样|原声线|别夹了|不装可爱|别可爱了)", content or ""))
+
+    def _next_scheduled_voice_mode(self):
+        config = self._persona_switch_config()
+        if not config.get("enable", True):
+            return None
+        with self.persona_switch_lock:
+            if self.cute_reply_streak >= config["cute_replies_before_real"]:
+                self.cute_reply_streak = 0
+                return "REAL"
+            self.cute_reply_streak += 1
+            return "CUTE"
+
+    def _pick_live_voice_mode(self, source_content: str, resp_content: str, advance: bool = False):
+        switch_config = self._persona_switch_config()
         merged = f"{source_content or ''} {resp_content or ''}"
-        if re.search(r"\[\[\s*REAL\s*\]\]", resp_content or "", re.IGNORECASE):
+        if switch_config.get("respect_explicit_real_trigger", True) and self._is_explicit_real_request(merged):
             return "REAL"
-        if re.search(r"(累了|困了|收声|先歇会|顶不住|麻了|无语|烦|绷不住|下班|歇会|好累|困死)", merged):
-            return "REAL"
-        if re.search(r"(深夜|半夜|凌晨|安静|没人|冷场|无聊)", source_content or "") and random.random() < 0.35:
-            return "REAL"
-        if re.search(r"(装累了|别装了|恢复原样|原声线|别夹了)", source_content or ""):
-            return "REAL"
+        if advance:
+            scheduled = self._next_scheduled_voice_mode()
+            if scheduled:
+                return scheduled
         return "CUTE"
 
     def _voice_mode_key(self, voice_mode: str):
@@ -652,10 +675,10 @@ class My_handle(metaclass=SingletonMeta):
         text = re.sub(r"\s+", " ", (text or "")).strip()
         if len(text) <= limit:
             return text
-        cut = max(text.rfind(ch, 0, limit + 1) for ch in ["，", "、", " ", "~"])
+        cut = max(text.rfind(ch, 0, limit + 1) for ch in ["，", "、", " ", "~", "：", ":"])
         if cut >= max(6, limit // 2):
             return text[:cut].rstrip(" ，、~")
-        return text[:limit].rstrip(" ，、~")
+        return ""
 
     def _soften_live_reply_text(self, text: str, voice_mode: str):
         text = (text or "").strip()
@@ -690,6 +713,8 @@ class My_handle(metaclass=SingletonMeta):
         if not raw_clauses:
             return ""
         first = self._smart_trim_reply(raw_clauses[0], limit)
+        if not first:
+            return ""
         if len(first) >= max(12, limit - 4) or len(raw_clauses) == 1:
             return first
         second = self._smart_trim_reply(raw_clauses[1], max(8, limit - len(first) - 1))
@@ -697,9 +722,9 @@ class My_handle(metaclass=SingletonMeta):
             return f"{first}，{second}".strip("，")
         return first
 
-    def _fallback_live_reply(self, source_content: str = "", resp_content: str = ""):
+    def _fallback_live_reply(self, source_content: str = "", resp_content: str = "", voice_mode: str = None):
         source = (source_content or "").strip()
-        voice_mode = self._pick_live_voice_mode(source_content, resp_content)
+        voice_mode = str(voice_mode or self._pick_live_voice_mode(source_content, resp_content)).upper()
         if voice_mode == "REAL":
             if re.search(r"晚上好|晚安前", source):
                 text = "晚上好，我还醒着"
@@ -733,18 +758,18 @@ class My_handle(metaclass=SingletonMeta):
         limit = 24 if voice_mode == "REAL" else 32
         return f"[[{voice_mode}]] {self._smart_trim_reply(text, limit)}"
 
-    def _rewrite_reply_to_live_style(self, source_content: str, resp_content: str):
+    def _rewrite_reply_to_live_style(self, source_content: str, resp_content: str, voice_mode: str = None):
         raw_text = (resp_content or "").strip()
-        voice_mode = self._pick_live_voice_mode(source_content, raw_text)
+        voice_mode = str(voice_mode or self._pick_live_voice_mode(source_content, raw_text)).upper()
         text = re.sub(r"\[\[\s*(CUTE|REAL)\s*\]\]\s*", "", raw_text, flags=re.IGNORECASE)
         text = re.sub(r"\s+", " ", text).strip()
         if any(marker in text for marker in ["逐条解释", "请提供更多的上下文", "以下是逐条解析", "1.", "2.", "3."]):
-            return self._fallback_live_reply(source_content, resp_content)
+            return self._fallback_live_reply(source_content, resp_content, voice_mode)
         cleaned_text = self._format_live_reply_text(text, voice_mode)
         if not cleaned_text:
-            return self._fallback_live_reply(source_content, resp_content)
+            return self._fallback_live_reply(source_content, resp_content, voice_mode)
         rewritten = f"[[{voice_mode}]] {cleaned_text}"
-        return rewritten if not self._reply_needs_style_rewrite(rewritten) else self._fallback_live_reply(source_content, resp_content)
+        return rewritten if not self._reply_needs_style_rewrite(rewritten) else self._fallback_live_reply(source_content, resp_content, voice_mode)
 
     def llm_handle(self, chat_type, data, type="chat", webui_show=True):
         try:
@@ -979,7 +1004,7 @@ class My_handle(metaclass=SingletonMeta):
 
     def _build_queue_reply(self, queue_data: dict, intent: str, **kwargs):
         source_content = queue_data.get("content") or ""
-        voice_mode = self._pick_live_voice_mode(source_content, "")
+        voice_mode = self._pick_live_voice_mode(source_content, "", advance=True)
         mode_key = self._voice_mode_key(voice_mode)
         templates = self._queue_reply_templates().get(mode_key, {})
         choices = templates.get(intent) or []
@@ -1004,6 +1029,10 @@ class My_handle(metaclass=SingletonMeta):
             return None
         if not re.match(r"^\s*\[\[(CUTE|REAL)\]\]", styled_reply):
             styled_reply = self._rewrite_reply_to_live_style(queue_data.get("content") or "", styled_reply)
+        elif not intent:
+            voice_mode = self._pick_live_voice_mode(queue_data.get("content") or "", styled_reply, advance=True)
+            text = re.sub(r"^\s*\[\[(CUTE|REAL)\]\]\s*", "", styled_reply, flags=re.IGNORECASE)
+            styled_reply = f"[[{voice_mode}]] {text}"
         voice_mode, clean_content = self.parse_voice_mode_and_clean(styled_reply)
         if clean_content is None:
             clean_content = styled_reply
@@ -1125,7 +1154,7 @@ class My_handle(metaclass=SingletonMeta):
         return message
 
     def _build_chatter_mode_prompt(self):
-        voice_mode = "REAL" if random.random() < 0.2 else "CUTE"
+        voice_mode = self._pick_live_voice_mode("直播间有点安静", "", advance=True)
         return self._build_live_prompt(voice_mode, "直播间有点安静，请主动找个轻松话题说一句。", My_handle.config.get("talk", "username") or "铃芽")
 
     def _generate_chatter_mode_content(self):
@@ -1318,7 +1347,7 @@ class My_handle(metaclass=SingletonMeta):
                 except Exception:
                     logger.error(traceback.format_exc())
 
-            selected_voice_mode = self._pick_live_voice_mode(content, "")
+            selected_voice_mode = self._pick_live_voice_mode(content, "", advance=True)
             llm_content = content
             if self.config.get("comment_template", "enable"):
                 variables = {"username": username, "comment": content, "cur_time": My_handle.common.get_bj_time(5)}
@@ -1335,10 +1364,10 @@ class My_handle(metaclass=SingletonMeta):
             resp_content = self.llm_stream_handle_and_audio_synthesis(chat_type, data_json) if self.config.get(chat_type, "stream") else self.llm_handle(chat_type, data_json)
             if not resp_content:
                 return None
-            if not re.match(r"^\s*\[\[(CUTE|REAL)\]\]", resp_content):
-                resp_content = f"[[{selected_voice_mode}]] {resp_content.strip()}"
+            resp_content = re.sub(r"^\s*\[\[(CUTE|REAL)\]\]\s*", "", resp_content.strip(), flags=re.IGNORECASE)
+            resp_content = f"[[{selected_voice_mode}]] {resp_content}"
             if self._reply_needs_style_rewrite(resp_content):
-                resp_content = self._rewrite_reply_to_live_style(content, resp_content)
+                resp_content = self._rewrite_reply_to_live_style(content, resp_content, selected_voice_mode)
             voice_mode, clean_content = self.parse_voice_mode_and_clean(resp_content)
             clean_content = self.prohibitions_handle((clean_content or "").replace("\n", "。").strip())
             if not clean_content:
@@ -1466,7 +1495,7 @@ class My_handle(metaclass=SingletonMeta):
                 }
                 self.audio_synthesis_handle(message)
                 return message
-            selected_voice_mode = self._pick_live_voice_mode(data["content"], "")
+            selected_voice_mode = self._pick_live_voice_mode(data["content"], "", advance=True)
             prompt = self._build_live_prompt(selected_voice_mode, data["content"], data["username"])
             resp_content = self.llm_handle(My_handle.config.get("chat_type"), {
                 "username": data["username"],
@@ -1476,10 +1505,10 @@ class My_handle(metaclass=SingletonMeta):
             })
             if not resp_content:
                 return None
-            if not re.match(r"^\s*\[\[(CUTE|REAL)\]\]", resp_content):
-                resp_content = f"[[{selected_voice_mode}]] {resp_content.strip()}"
+            resp_content = re.sub(r"^\s*\[\[(CUTE|REAL)\]\]\s*", "", resp_content.strip(), flags=re.IGNORECASE)
+            resp_content = f"[[{selected_voice_mode}]] {resp_content}"
             if self._reply_needs_style_rewrite(resp_content):
-                resp_content = self._rewrite_reply_to_live_style(data["content"], resp_content)
+                resp_content = self._rewrite_reply_to_live_style(data["content"], resp_content, selected_voice_mode)
             voice_mode, clean_content = self.parse_voice_mode_and_clean(resp_content)
             clean_content = self.prohibitions_handle((clean_content or "").replace("\n", "。").strip())
             if not clean_content:
