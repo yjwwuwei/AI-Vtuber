@@ -131,6 +131,37 @@ def start_server():
                 logger.error(f"callback处理失败！{e}")
                 return CommonResult(code=-1, message=f"callback处理失败！{e}")
 
+        @app.get("/memory_status")
+        async def memory_status():
+            try:
+                data = my_handle.get_memory_status()
+                return CommonResult(code=200, data=data, message="memory_status处理成功！")
+            except Exception as e:
+                logger.error(f"memory_status处理失败！{e}")
+                return CommonResult(code=-1, message=f"memory_status处理失败！{e}")
+
+        @app.post("/compress_memory")
+        async def compress_memory(request: Request):
+            try:
+                payload = await request.json()
+                result = my_handle.compress_live_session_memory(reset_session=bool(payload.get("reset_session", False)))
+                return CommonResult(code=200, data=result, message="compress_memory处理成功！")
+            except Exception as e:
+                logger.error(traceback.format_exc())
+                return CommonResult(code=-1, message=f"compress_memory处理失败！{e}")
+
+        @app.post("/reload_config")
+        async def reload_config_api():
+            try:
+                global config, platform
+                config = Config(config_path)
+                platform = config.get("platform")
+                my_handle.reload_config(config_path, reset_live_session=False)
+                return CommonResult(code=200, message="reload_config处理成功！")
+            except Exception as e:
+                logger.error(traceback.format_exc())
+                return CommonResult(code=-1, message=f"reload_config处理失败！{e}")
+
         @app.get("/get_sys_info")
         async def get_sys_info():
             try:
@@ -282,6 +313,14 @@ def start_server():
 
 def exit_handler(signum, frame):
     logger.info("收到信号: %s", signum)
+    try:
+        if my_handle is not None and config is not None:
+            memory_config = config.get("memory") or {}
+            if memory_config.get("auto_compress_on_stop", True):
+                result = my_handle.compress_live_session_memory(reset_session=False)
+                logger.info("退出前已压缩本场记忆: %s", result.get("summary"))
+    except Exception:
+        logger.error(traceback.format_exc())
 
 
 if __name__ == "__main__":

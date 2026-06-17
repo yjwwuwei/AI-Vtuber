@@ -35,6 +35,7 @@ log_messages = []
 log_lock = threading.Lock()
 log_area = None
 status_label = None
+memory_status_area = None
 config_inputs = {}
 
 SENSITIVE_KEYWORDS = (
@@ -135,6 +136,7 @@ def refresh_status() -> None:
         return
     status_label.text = "运行中" if is_main_running() else "已停止"
     status_label.update()
+    refresh_memory_status()
 
 
 def load_base_config() -> dict:
@@ -204,6 +206,107 @@ def save_config() -> None:
     add_log("配置已保存")
 
 
+def main_api_url(path: str) -> str:
+    return f"http://127.0.0.1:{config.get('api_port')}{path}"
+
+
+def notify_main_reload_config() -> None:
+    if not is_main_running():
+        return
+    try:
+        resp = requests.post(main_api_url("/reload_config"), timeout=15)
+        add_log(f"主进程重载配置: {resp.text[:120]}")
+    except Exception as exc:
+        add_log(f"通知主进程重载配置失败: {exc}")
+
+
+def read_json_file(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def format_memory_status(data: dict) -> str:
+    live_session = data.get("live_session", {})
+    user_memory = data.get("user_memory", {})
+    long_term_memory = data.get("long_term_memory", {})
+    lines = [
+        f"本场开始: {live_session.get('started_at') or '-'}",
+        f"本场更新: {live_session.get('updated_at') or '-'}",
+        f"本场弹幕: {live_session.get('total_comments', 0)}",
+        f"本场活跃观众数: {live_session.get('active_user_count', 0)}",
+        f"本场话题数: {live_session.get('topic_count', 0)}",
+        f"用户记忆人数: {user_memory.get('user_count', 0)}",
+        f"长期记忆场次: {long_term_memory.get('archive_count', 0)}",
+        f"长期最新摘要: {long_term_memory.get('latest_summary') or '-'}",
+        f"用户记忆文件: {user_memory.get('path') or (BASE_DIR / 'data' / 'lingya_memory.json')}",
+        f"长期记忆文件: {long_term_memory.get('path') or (BASE_DIR / 'data' / 'lingya_long_term_memory.json')}",
+    ]
+    return "\n".join(lines)
+
+
+def get_memory_status_payload() -> dict:
+    if is_main_running():
+        try:
+            resp = requests.get(main_api_url("/memory_status"), timeout=15)
+            payload = resp.json()
+            if isinstance(payload, dict) and payload.get("data"):
+                return payload["data"]
+        except Exception:
+            pass
+    live_session = read_json_file(BASE_DIR / "data" / "lingya_live_session.json")
+    user_memory = read_json_file(BASE_DIR / "data" / "lingya_memory.json")
+    long_term_memory = read_json_file(BASE_DIR / "data" / "lingya_long_term_memory.json")
+    return {
+        "live_session": {
+            "started_at": live_session.get("started_at"),
+            "updated_at": live_session.get("updated_at"),
+            "total_comments": int(live_session.get("total_comments", 0) or 0),
+            "active_user_count": len(live_session.get("active_users") or {}),
+            "topic_count": len(live_session.get("topic_counts") or {}),
+        },
+        "user_memory": {
+            "user_count": len(user_memory) if isinstance(user_memory, dict) else 0,
+            "path": str(BASE_DIR / "data" / "lingya_memory.json"),
+        },
+        "long_term_memory": {
+            "archive_count": len((long_term_memory or {}).get("archives") or []) if isinstance(long_term_memory, dict) else 0,
+            "latest_summary": (long_term_memory or {}).get("latest_summary") if isinstance(long_term_memory, dict) else "",
+            "path": str(BASE_DIR / "data" / "lingya_long_term_memory.json"),
+        },
+    }
+
+
+def refresh_memory_status() -> None:
+    if memory_status_area is None:
+        return
+    try:
+        memory_status_area.value = format_memory_status(get_memory_status_payload())
+    except Exception as exc:
+        memory_status_area.value = f"记忆状态读取失败: {exc}"
+    memory_status_area.update()
+
+
+def compress_memory(reset_session: bool = False, quiet: bool = False) -> None:
+    if not is_main_running():
+        if not quiet:
+            add_log("主进程未运行，无法压缩本场记忆")
+        refresh_memory_status()
+        return
+    try:
+        resp = requests.post(main_api_url("/compress_memory"), json={"reset_session": reset_session}, timeout=30)
+        payload = resp.json() if resp.content else {}
+        if not quiet:
+            add_log(f"记忆压缩结果: {payload}")
+    except Exception as exc:
+        if not quiet:
+            add_log(f"记忆压缩失败: {exc}")
+    refresh_memory_status()
+
+
 def reload_runtime_config() -> None:
     global config, audio
     config = Config(str(CONFIG_PATH))
@@ -238,9 +341,17 @@ def start_main() -> None:
     refresh_status()
 
 
+def ensure_main_running() -> None:
+    if read_main_pid() and is_pid_running(read_main_pid()):
+        return
+    start_main()
+
+
 def stop_main() -> None:
     global main_process
     pid = read_main_pid()
+    if is_main_running() and bool(get_nested(config.config, ("memory", "auto_compress_on_stop"), True)):
+        compress_memory(reset_session=False, quiet=False)
     with main_process_lock:
         proc = main_process
         if proc is not None and proc.poll() is None:
@@ -393,7 +504,7 @@ def build_number(label: str, path: tuple[str, ...], value_type: str = "int", loc
 
 
 def build_ui():
-    global log_area, status_label
+    global log_area, status_label, memory_status_area
 
     ui.page_title("AI-Vtuber 精简控制台")
     ui.query("body").style("background:#f5f1e8;")
@@ -403,7 +514,7 @@ def build_ui():
             ui.label("AI-Vtuber").classes("text-2xl")
             with ui.row().classes("items-center gap-4"):
                 status_label = ui.label("未知")
-                ui.button("保存配置", on_click=lambda: [save_config(), reload_runtime_config()]).props("color=primary")
+                ui.button("保存配置", on_click=lambda: [save_config(), reload_runtime_config(), notify_main_reload_config(), refresh_memory_status()]).props("color=primary")
                 ui.button("启动主程序", on_click=start_main).props("color=positive")
                 ui.button("停止主程序", on_click=stop_main).props("color=negative")
                 ui.button("重启主程序", on_click=restart_main)
@@ -545,24 +656,47 @@ def build_ui():
                     ui.label("精简版保留配置，不在这里做复杂编辑。需要改动时直接改 JSON 更稳。")
 
             with ui.tab_panel(memory_tab):
-                ui.label(f"记忆文件: {BASE_DIR / 'data' / 'lingya_memory.json'}")
+                ui.label(f"用户记忆文件: {BASE_DIR / 'data' / 'lingya_memory.json'}")
+                ui.label(f"本场记忆文件: {BASE_DIR / 'data' / 'lingya_live_session.json'}")
+                ui.label(f"长期记忆文件: {BASE_DIR / 'data' / 'lingya_long_term_memory.json'}")
+                with ui.row().classes("items-center gap-4"):
+                    ui.button("刷新记忆状态", on_click=refresh_memory_status)
+                    ui.button("压缩本场记忆", on_click=lambda: compress_memory(reset_session=False)).props("color=primary")
+                    ui.button("压缩并开始新场", on_click=lambda: compress_memory(reset_session=True)).props("color=secondary")
+                memory_status_area = ui.textarea(label="记忆状态", value="", placeholder="这里会显示本场与长期记忆状态").props("outlined autogrow readonly")
+                memory_status_area.classes("w-full")
                 with ui.grid(columns=2).classes("w-full gap-4"):
                     build_switch("启用记忆", ("memory", "enable"))
                     build_number("每人最大笔记数", ("memory", "max_notes_per_user"), "int")
                     build_number("注入提示词条数", ("memory", "max_prompt_notes"), "int")
                     build_number("单条笔记字数", ("memory", "note_max_len"), "int")
+                    build_switch("启用本场直播记忆", ("memory", "live_session_enable"))
+                    build_number("本场近期弹幕注入条数", ("memory", "live_recent_prompt_limit"), "int")
+                    build_number("本场活跃观众注入人数", ("memory", "live_active_user_limit"), "int")
+                    build_number("本场高频话题注入条数", ("memory", "live_topic_limit"), "int")
+                    build_number("本场最多缓存弹幕数", ("memory", "live_store_max_comments"), "int")
+                    build_switch("启用长期记忆", ("memory", "long_term_enable"))
+                    build_number("长期记忆注入场次数", ("memory", "long_term_prompt_limit"), "int")
+                    build_number("长期记忆归档上限", ("memory", "long_term_archive_limit"), "int")
+                    build_number("压缩摘要最大字数", ("memory", "summary_max_len"), "int")
+                    build_number("压缩时保留近期弹幕数", ("memory", "summary_recent_comments_limit"), "int")
+                    build_number("压缩时保留活跃观众数", ("memory", "summary_top_users_limit"), "int")
+                    build_number("压缩时保留高频话题数", ("memory", "summary_top_topics_limit"), "int")
+                    build_switch("停止主程序前自动压缩", ("memory", "auto_compress_on_stop"))
 
             with ui.tab_panel(log_tab):
                 log_area = ui.textarea(label="运行日志", value="", placeholder="这里会显示 WebUI、本地回调、公屏发送结果").props("outlined autogrow readonly")
                 log_area.classes("w-full")
 
     refresh_status()
+    refresh_memory_status()
 
 
 build_ui()
+ensure_main_running()
 ui.timer(2.0, refresh_status)
 
 
 if __name__ in {"__main__", "__mp_main__"}:
     add_log("WebUI 已启动")
-    ui.run(host=config.get("webui", "ip"), port=int(config.get("webui", "port")), reload=False, show=False)
+    ui.run(host=config.get("webui", "ip"), port=int(config.get("webui", "port")), reload=False, show=True)
